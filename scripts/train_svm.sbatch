@@ -1,11 +1,12 @@
 #!/bin/bash
 #SBATCH --job-name=evo_svm
-#SBATCH --partition=norm
+#SBATCH --account=soc-np
+#SBATCH --partition=soc-np
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=256G
 #SBATCH --time=48:00:00
-#SBATCH --output=logs/svm_%j.out
-#SBATCH --error=logs/svm_%j.err
+#SBATCH --output=logs/%x_%j.out
+#SBATCH --error=logs/%x_%j.err
 
 script_dir="/uufs/chpc.utah.edu/common/home/u1323098/sundar-group-space2/EVO/EVO_embed_classify"
 

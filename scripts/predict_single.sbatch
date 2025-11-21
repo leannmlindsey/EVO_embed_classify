@@ -1,12 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name=evo_predict
-#SBATCH --partition=gpu
+#SBATCH --account=soc-gpu-np
+#SBATCH --partition=soc-gpu-np
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=02:00:00
-#SBATCH --output=logs/predict_%j.out
-#SBATCH --error=logs/predict_%j.err
+#SBATCH --output=logs/%x_%j.out
+#SBATCH --error=logs/%x_%j.err
 
 # This sbatch script processes a single CSV file
 # Usage: sbatch predict_single.sbatch <input_csv_file> <output_dir> <model_path> <scaler_path>

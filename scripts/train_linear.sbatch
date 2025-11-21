@@ -1,28 +1,31 @@
 #!/bin/bash
 #SBATCH --job-name=evo_linear
-#SBATCH --partition=norm
+#SBATCH --account=soc-np
+#SBATCH --partition=soc-np
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=32G
 #SBATCH --time=02:00:00
-#SBATCH --output=logs/linear_%j.out
-#SBATCH --error=logs/linear_%j.err
+#SBATCH --output=logs/%x_%j.out
+#SBATCH --error=logs/%x_%j.err
 
-# Change to project root directory (parent of scripts/)
-cd ${SLURM_SUBMIT_DIR}/..
+script_dir="/uufs/chpc.utah.edu/common/home/u1323098/sundar-group-space2/EVO/EVO_embed_classify"
 
-# Load required modules
-module load python/3.9
+cd ${script_dir}
 
-# Activate conda environment if needed
-# source activate your_env_name
+# Setup environment
+module load cuda
+nvidia-smi
+source activate evo
+
+echo "TIME: START SVM training  = `date +"%Y-%m-%d %T"`"
 
 # Create logs directory if it doesn't exist
 mkdir -p logs
 
 # Set paths
-INPUT_DIR="./data"  # Update this path
-OUTPUT_DIR="./results/linear"  # Results will be saved here
-EMBEDDINGS_DIR="./embeddings"  # Shared embeddings directory
+INPUT_DIR="$script_dir/CSV"  
+OUTPUT_DIR="$script_dir/linear_$(date +%Y%m%d_%H%M%S)"
+EMBEDDINGS_DIR="$script_dir/embeddings" 
 
 # Create directories
 mkdir -p ${OUTPUT_DIR}

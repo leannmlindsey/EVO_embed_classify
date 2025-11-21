@@ -1,12 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name=evo_nn
-#SBATCH --partition=gpu
+#SBATCH --account=soc-gpu-np
+#SBATCH --partition=soc-gpu-np
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=12:00:00
-#SBATCH --output=logs/nn_%j.out
-#SBATCH --error=logs/nn_%j.err
+#SBATCH --output=logs/%x_%j.out
+#SBATCH --error=logs/%x_%j.err
 
 # Get seed from command line argument
 SEED=$1
