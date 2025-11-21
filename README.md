@@ -66,12 +66,21 @@ python predict_evo.py \
 - tqdm
 - matplotlib
 - seaborn
-- evo-model
+- **EVO model** - Must be installed separately (see below)
 
-### Install Dependencies
+### EVO Installation
+
+This pipeline uses embeddings from the [EVO foundation model](https://github.com/evo-design/evo). **EVO must be installed on your system before running the embedding and training scripts.**
+
+Follow the installation instructions on the EVO GitHub repository:
+- **Repository:** https://github.com/evo-design/evo
+- Set up a conda environment according to the directions provided
+- Ensure EVO is properly installed and accessible in your environment
+
+### Install Other Dependencies
 
 ```bash
-pip install torch scikit-learn pandas numpy tqdm matplotlib seaborn evo-model
+pip install torch scikit-learn pandas numpy tqdm matplotlib seaborn
 ```
 
 ## Project Structure
@@ -221,8 +230,18 @@ Detailed guides are available in the `docs/` directory:
 
 If you use this code, please cite the EVO model:
 
-```
-# Add EVO model citation here
+```bibtex
+@article{nguyen2024sequence,
+   author = {Eric Nguyen and Michael Poli and Matthew G. Durrant and Brian Kang and Dhruva Katrekar and David B. Li and Liam J. Bartie and Armin W. Thomas and Samuel H. King and Garyk Brixi and Jeremy Sullivan and Madelena Y. Ng and Ashley Lewis and Aaron Lou and Stefano Ermon and Stephen A. Baccus and Tina Hernandez-Boussard and Christopher Ré and Patrick D. Hsu and Brian L. Hie },
+   title = {Sequence modeling and design from molecular to genome scale with Evo},
+   journal = {Science},
+   volume = {386},
+   number = {6723},
+   pages = {eado9336},
+   year = {2024},
+   doi = {10.1126/science.ado9336},
+   URL = {https://www.science.org/doi/abs/10.1126/science.ado9336},
+}
 ```
 
 ## License
