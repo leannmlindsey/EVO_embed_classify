@@ -1,0 +1,4 @@
+seq_id,sequence,description
+test_001,ATCGATCGATCGATCGATCGATCG,Test sequence 1
+test_002,GCTAGCTAGCTAGCTAGCTAGCTA,Test sequence 2
+test_003,TTAATTAATTAATTAATTAATTAA,Test sequence 3

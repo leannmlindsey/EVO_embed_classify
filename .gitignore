@@ -1,0 +1,76 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# PyCharm
+.idea/
+
+# VSCode
+.vscode/
+
+# Data files
+data/
+*.csv
+!examples/*.csv
+
+# Results and outputs
+results/
+predictions/
+embeddings/
+*.npz
+*.joblib
+*.pt
+*.png
+
+# Logs
+logs/
+*.log
+*.out
+*.err
+
+# SLURM
+slurm-*.out
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+*~
+.reorganization_plan.md
+reorganize.sh
+
+# EVO directory (ignore all contents)
+evo/
+
+# Example files not for public repo
+prokbert_example_inference.py
