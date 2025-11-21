@@ -65,6 +65,9 @@ echo "Start time: $(date)"
 echo "=================================================="
 echo ""
 
+# Record start time for duration calculation
+START_TIME=$(date +%s)
+
 # Run prediction
 python predict_evo.py \
     --input ${INPUT_CSV} \
@@ -75,20 +78,61 @@ python predict_evo.py \
     --pooling mean \
     --device cuda
 
+# Calculate duration
+END_TIME=$(date +%s)
+DURATION=$((END_TIME - START_TIME))
+HOURS=$((DURATION / 3600))
+MINUTES=$(((DURATION % 3600) / 60))
+SECONDS=$((DURATION % 60))
+
+# Count number of sequences predicted (subtract 1 for header)
+if [ -f "$OUTPUT_CSV" ]; then
+    NUM_SEQUENCES=$(($(wc -l < "$OUTPUT_CSV") - 1))
+else
+    NUM_SEQUENCES=0
+fi
+
 # Check if prediction was successful
 if [ $? -eq 0 ]; then
     echo ""
     echo "=================================================="
     echo "Prediction completed successfully!"
     echo "Output saved to: $OUTPUT_CSV"
+    echo "Number of sequences: $NUM_SEQUENCES"
     echo "End time: $(date)"
+    echo "Duration: ${HOURS}h ${MINUTES}m ${SECONDS}s (${DURATION} seconds)"
     echo "=================================================="
+
+    # Record timing to a CSV file for later analysis
+    TIMING_LOG="${OUTPUT_DIR}/prediction_timing.csv"
+
+    # Create header if file doesn't exist
+    if [ ! -f "$TIMING_LOG" ]; then
+        echo "job_id,input_file,num_sequences,start_time,end_time,duration_seconds,status" > "$TIMING_LOG"
+    fi
+
+    # Append timing information
+    echo "${SLURM_JOB_ID},${BASENAME},${NUM_SEQUENCES},${START_TIME},${END_TIME},${DURATION},success" >> "$TIMING_LOG"
+
 else
     echo ""
     echo "=================================================="
     echo "ERROR: Prediction failed!"
     echo "Check the error log for details"
     echo "End time: $(date)"
+    echo "Duration: ${HOURS}h ${MINUTES}m ${SECONDS}s (${DURATION} seconds)"
     echo "=================================================="
+
+    # Record failure to timing log
+    TIMING_LOG="${OUTPUT_DIR}/prediction_timing.csv"
+
+    # Create header if file doesn't exist
+    if [ ! -f "$TIMING_LOG" ]; then
+        echo "job_id,input_file,num_sequences,start_time,end_time,duration_seconds,status" > "$TIMING_LOG"
+    fi
+
+    # Append timing information for failed job
+    echo "${SLURM_JOB_ID},${BASENAME},${NUM_SEQUENCES},${START_TIME},${END_TIME},${DURATION},failed" >> "$TIMING_LOG"
+
     exit 1
 fi

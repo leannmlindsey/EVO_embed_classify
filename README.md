@@ -113,7 +113,9 @@ pip install torch scikit-learn pandas numpy tqdm matplotlib seaborn
 │   ├── train_nn.sbatch            # Train NN classifier
 │   ├── run_nn_10x.sh              # Run NN with 10 seeds
 │   ├── predict_single.sbatch      # Single file prediction
-│   └── submit_all_predictions.sh  # Batch prediction submission
+│   ├── submit_all_predictions.sh  # Batch prediction submission
+│   ├── analyze_predictions.py     # Comprehensive metrics analysis
+│   └── run_metrics_analysis.sh    # Metrics analysis wrapper
 └── examples/                       # Example files
     └── example_input.csv          # Example input format
 ```
@@ -231,6 +233,43 @@ Predictions include:
 - `predicted_class_name` - Class name (e.g., "Bacteria" or "Phage")
 - `probability` - Probability of class 1
 - `confidence` - Model confidence (0.5 to 1.0)
+
+### Prediction Analysis & Metrics
+
+After running predictions, analyze results comprehensively:
+
+```bash
+# Overall metrics (TP, FP, TN, FN, accuracy, precision, recall, F1, MCC with std devs)
+./scripts/run_metrics_analysis.sh \
+    ./predictions \
+    ./data/test.csv \
+    ./results/overall_metrics.csv
+
+# Stratified by bacterial phylum
+./scripts/run_metrics_analysis.sh \
+    ./predictions \
+    ./data/test.csv \
+    ./results/metrics_by_phylum.csv \
+    bacterial_phylum
+
+# Stratified by multiple metadata columns
+./scripts/run_metrics_analysis.sh \
+    ./predictions \
+    ./data/test.csv \
+    ./results/metrics_stratified.csv \
+    bacterial_phylum phage_family
+```
+
+The analysis script calculates:
+- **Confusion Matrix**: TP, FP, TN, FN counts
+- **Performance Metrics**: Accuracy, Precision, Recall, F1-score, MCC
+- **Standard Deviations**: Bootstrap-based std dev for all metrics (default: 1000 iterations)
+- **Stratified Analysis**: Metrics by any metadata column (phylum, family, etc.)
+
+**Requirements**: Ground truth file must have:
+- `sequence` column (matching prediction files)
+- `label` column (true binary labels: 0 or 1)
+- Optional metadata columns for stratified analysis (e.g., `bacterial_phylum`, `phage_family`)
 
 ## Configuration
 
