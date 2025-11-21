@@ -114,6 +114,7 @@ pip install torch scikit-learn pandas numpy tqdm matplotlib seaborn
 │   ├── run_nn_10x.sh              # Run NN with 10 seeds
 │   ├── predict_single.sbatch      # Single file prediction
 │   ├── submit_all_predictions.sh  # Batch prediction submission
+│   ├── concat_metrics.sh          # Concatenate all metrics CSVs
 │   ├── analyze_predictions.py     # Comprehensive metrics analysis
 │   └── run_metrics_analysis.sh    # Metrics analysis wrapper
 └── examples/                       # Example files
@@ -228,11 +229,25 @@ Each training run creates:
 
 ### Prediction Output
 
-Predictions include:
+**Prediction CSV** (`*_predictions.csv`):
 - `predicted_class` - Class label (0 or 1)
 - `predicted_class_name` - Class name (e.g., "Bacteria" or "Phage")
 - `probability` - Probability of class 1
 - `confidence` - Model confidence (0.5 to 1.0)
+
+**Metrics CSV** (`*_metrics.csv`):
+Each prediction generates a metrics file with:
+- `filename` - Input filename
+- `n_sequences` - Number of sequences processed
+- `TP, TN, FP, FN` - Confusion matrix values
+- `accuracy, precision, recall, f1_score, mcc` - Performance metrics
+- `mean_probability` - Average prediction probability
+
+**Concatenate All Metrics:**
+```bash
+# Combine all genome metrics into single file
+./scripts/concat_metrics.sh ./predictions all_genomes_metrics.csv
+```
 
 ### Prediction Analysis & Metrics
 

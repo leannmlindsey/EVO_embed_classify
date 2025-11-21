@@ -14,6 +14,7 @@ from joblib import load
 import argparse
 import os
 import sys
+from sklearn.metrics import confusion_matrix, precision_score, recall_score, f1_score, matthews_corrcoef
 
 
 class ThreeLayerNN(nn.Module):
@@ -127,7 +128,7 @@ class NeuralNetworkClassifier:
         return np.column_stack([1 - proba, proba])
 
 
-def extract_embeddings(df, model_name, device, batch_size=1, pooling='mean'):
+def extract_embeddings(df, model_name, device, batch_size=1, pooling='mean', true_batching=False):
     """
     Extract embeddings from EVO model using monkey patching
 
@@ -137,11 +138,13 @@ def extract_embeddings(df, model_name, device, batch_size=1, pooling='mean'):
         device: Device to use (cuda or cpu)
         batch_size: Batch size for processing
         pooling: Pooling strategy ('mean' or 'max')
+        true_batching: If True, use proper batching with padding; if False, use sequential processing
 
     Returns:
         embeddings: numpy array of embeddings
     """
     print(f"Loading EVO model: {model_name}...")
+    print(f"Batching mode: {'TRUE (padded)' if true_batching else 'SEQUENTIAL (one-by-one)'}")
 
     try:
         from evo import Evo
@@ -166,38 +169,76 @@ def extract_embeddings(df, model_name, device, batch_size=1, pooling='mean'):
     print(f"Extracting embeddings for {len(df)} sequences...")
     all_embeddings = []
 
-    with torch.no_grad():
-        for i in tqdm(range(0, len(df), batch_size)):
-            batch_df = df.iloc[i:i+batch_size]
-            embeddings_batch = []
+    if true_batching:
+        # TRUE BATCHING: Stack sequences, pad to max length, single forward pass
+        with torch.no_grad():
+            for i in tqdm(range(0, len(df), batch_size)):
+                batch_df = df.iloc[i:i+batch_size]
 
-            for _, row in batch_df.iterrows():
-                sequence = row['sequence']
+                # Tokenize all sequences in batch
+                tokenized_seqs = [tokenizer.tokenize(row['sequence']) for _, row in batch_df.iterrows()]
 
-                # Tokenize the sequence
-                input_ids = torch.tensor(
-                    tokenizer.tokenize(sequence),
-                    dtype=torch.int
-                ).unsqueeze(0).to(device)
+                # Find max length in this batch
+                max_len = max(len(seq) for seq in tokenized_seqs)
 
-                # Get embeddings (with monkey patch, the model output is now the embeddings)
+                # Pad sequences to max length and stack
+                padded_seqs = []
+                for seq in tokenized_seqs:
+                    # Pad with zeros (typical padding token)
+                    padded = seq + [0] * (max_len - len(seq))
+                    padded_seqs.append(padded)
+
+                # Stack into single tensor [batch_size, max_len]
+                input_ids = torch.tensor(padded_seqs, dtype=torch.int).to(device)
+
+                # Single forward pass for entire batch
                 embed, _ = model(input_ids)
 
-                # Apply pooling strategy
+                # Apply pooling strategy for each sequence in batch
                 if pooling == 'mean':
-                    # Mean pooling
-                    pooled_embedding = embed.mean(dim=1).to(torch.float32).cpu().numpy()
+                    # Mean pooling over sequence length dimension
+                    pooled_embeddings = embed.mean(dim=1).to(torch.float32).cpu().numpy()
                 elif pooling == 'max':
-                    # Max pooling
-                    pooled_embedding = torch.max(embed, dim=1)[0].to(torch.float32).cpu().numpy()
+                    # Max pooling over sequence length dimension
+                    pooled_embeddings = torch.max(embed, dim=1)[0].to(torch.float32).cpu().numpy()
                 else:
                     raise ValueError(f"Unknown pooling strategy: {pooling}")
 
-                embeddings_batch.append(pooled_embedding)
+                all_embeddings.append(pooled_embeddings)
+    else:
+        # ORIGINAL SEQUENTIAL PROCESSING: One sequence at a time
+        with torch.no_grad():
+            for i in tqdm(range(0, len(df), batch_size)):
+                batch_df = df.iloc[i:i+batch_size]
+                embeddings_batch = []
 
-            # Concatenate embeddings from the batch
-            embeddings_batch = np.vstack(embeddings_batch)
-            all_embeddings.append(embeddings_batch)
+                for _, row in batch_df.iterrows():
+                    sequence = row['sequence']
+
+                    # Tokenize the sequence
+                    input_ids = torch.tensor(
+                        tokenizer.tokenize(sequence),
+                        dtype=torch.int
+                    ).unsqueeze(0).to(device)
+
+                    # Get embeddings (with monkey patch, the model output is now the embeddings)
+                    embed, _ = model(input_ids)
+
+                    # Apply pooling strategy
+                    if pooling == 'mean':
+                        # Mean pooling
+                        pooled_embedding = embed.mean(dim=1).to(torch.float32).cpu().numpy()
+                    elif pooling == 'max':
+                        # Max pooling
+                        pooled_embedding = torch.max(embed, dim=1)[0].to(torch.float32).cpu().numpy()
+                    else:
+                        raise ValueError(f"Unknown pooling strategy: {pooling}")
+
+                    embeddings_batch.append(pooled_embedding)
+
+                # Concatenate embeddings from the batch
+                embeddings_batch = np.vstack(embeddings_batch)
+                all_embeddings.append(embeddings_batch)
 
     # Concatenate all embeddings
     all_embeddings = np.vstack(all_embeddings)
@@ -278,6 +319,12 @@ def parse_arguments():
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
                         help="Device to use (cuda or cpu)")
 
+    parser.add_argument("--true_batching", action='store_true',
+                        help="Use true batching (pad sequences and process together) instead of sequential processing")
+
+    parser.add_argument("--force_recompute", action='store_true',
+                        help="Force recompute embeddings even if cached embeddings exist")
+
     return parser.parse_args()
 
 
@@ -306,14 +353,40 @@ def main():
         print(f"  Available columns: {list(df.columns)}")
         sys.exit(1)
 
-    # Extract embeddings
-    embeddings = extract_embeddings(
-        df,
-        args.model_name,
-        device,
-        batch_size=args.batch_size,
-        pooling=args.pooling
-    )
+    # Create output directory if it doesn't exist
+    output_dir = os.path.dirname(args.output)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+
+    # Create embeddings cache path based on input filename
+    input_basename = os.path.splitext(os.path.basename(args.input))[0]
+    embeddings_cache_path = os.path.join(output_dir if output_dir else '.',
+                                         f"{input_basename}_embeddings_{args.pooling}.npz")
+
+    # Check if embeddings already exist (unless force recompute is set)
+    if os.path.exists(embeddings_cache_path) and not args.force_recompute:
+        print(f"Loading pre-computed embeddings from {embeddings_cache_path}...")
+        embeddings_data = np.load(embeddings_cache_path)
+        embeddings = embeddings_data['embeddings']
+        print(f"  ✓ Loaded embeddings with shape: {embeddings.shape}")
+    else:
+        if args.force_recompute and os.path.exists(embeddings_cache_path):
+            print("Force recompute flag set - ignoring cached embeddings")
+        print("Computing embeddings (this may take a while)...")
+        # Extract embeddings
+        embeddings = extract_embeddings(
+            df,
+            args.model_name,
+            device,
+            batch_size=args.batch_size,
+            pooling=args.pooling,
+            true_batching=args.true_batching
+        )
+
+        # Save embeddings to cache
+        print(f"Saving embeddings to {embeddings_cache_path}...")
+        np.savez(embeddings_cache_path, embeddings=embeddings)
+        print(f"  ✓ Embeddings cached for future use")
 
     # Load scaler
     print(f"Loading scaler from {args.scaler}...")
@@ -346,16 +419,59 @@ def main():
     print(f"Saving predictions to {args.output}...")
     output_df.to_csv(args.output, index=False)
 
-    # Calculate accuracy
-    accuracy = (df['label'] == df['predicted_label']).mean()
+    # Calculate comprehensive metrics
+    y_true = df['label'].values
+    y_pred = df['predicted_label'].values
 
-    # Get basename of output file
+    # Confusion matrix
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+
+    # Calculate metrics
+    accuracy = (y_true == y_pred).mean()
+    precision = precision_score(y_true, y_pred, zero_division=0)
+    recall = recall_score(y_true, y_pred, zero_division=0)
+    f1 = f1_score(y_true, y_pred, zero_division=0)
+    mcc = matthews_corrcoef(y_true, y_pred)
+
+    # Get basename of input and output files
+    input_basename = os.path.splitext(os.path.basename(args.input))[0]
     output_basename = os.path.basename(args.output)
 
-    # Print summary (matching ProkBERT format)
-    print(f"  ✓ Saved to: {output_basename}")
-    print(f"  Accuracy: {accuracy:.4f}")
-    print(f"  Predicted labels: {df['predicted_label'].value_counts().to_dict()}")
+    # Save metrics to CSV
+    metrics_csv_path = os.path.join(output_dir if output_dir else '.',
+                                     f"{input_basename}_metrics.csv")
+    metrics_data = {
+        'filename': [input_basename],
+        'n_sequences': [len(df)],
+        'TP': [int(tp)],
+        'TN': [int(tn)],
+        'FP': [int(fp)],
+        'FN': [int(fn)],
+        'accuracy': [accuracy],
+        'precision': [precision],
+        'recall': [recall],
+        'f1_score': [f1],
+        'mcc': [mcc],
+        'mean_probability': [np.mean(probabilities)]
+    }
+    metrics_df = pd.DataFrame(metrics_data)
+    metrics_df.to_csv(metrics_csv_path, index=False)
+    print(f"  ✓ Metrics saved to: {os.path.basename(metrics_csv_path)}")
+
+    # Print comprehensive summary
+    print(f"  ✓ Saved predictions to: {output_basename}")
+    print(f"\n  Confusion Matrix:")
+    print(f"    TP (True Positives):  {tp:>6d}")
+    print(f"    TN (True Negatives):  {tn:>6d}")
+    print(f"    FP (False Positives): {fp:>6d}")
+    print(f"    FN (False Negatives): {fn:>6d}")
+    print(f"\n  Performance Metrics:")
+    print(f"    Accuracy:   {accuracy:.4f}")
+    print(f"    Precision:  {precision:.4f}")
+    print(f"    Recall:     {recall:.4f}")
+    print(f"    F1-score:   {f1:.4f}")
+    print(f"    MCC:        {mcc:.4f}")
+    print(f"\n  Predicted labels: {df['predicted_label'].value_counts().to_dict()}")
     print(f"  Mean probability (phage): {np.mean(probabilities):.4f}")
 
 
