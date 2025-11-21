@@ -7,22 +7,24 @@
 #SBATCH --output=logs/svm_%j.out
 #SBATCH --error=logs/svm_%j.err
 
-# Change to project root directory (parent of scripts/)
-cd ${SLURM_SUBMIT_DIR}/..
+script_dir="/uufs/chpc.utah.edu/common/home/u1323098/sundar-group-space2/EVO/EVO_embed_classify"
 
-# Load required modules
-module load python/3.9
+cd ${script_dir}
 
-# Activate conda environment if needed
-# source activate your_env_name
+# Setup environment
+module load cuda
+nvidia-smi
+source activate evo
+
+echo "TIME: START SVM training  = `date +"%Y-%m-%d %T"`"
 
 # Create logs directory if it doesn't exist
 mkdir -p logs
 
 # Set paths
-INPUT_DIR="./data"  # Update this path
-OUTPUT_DIR="./results/svm"  # Results will be saved here
-EMBEDDINGS_DIR="./embeddings"  # Shared embeddings directory
+INPUT_DIR="$script_dir/CSV"  
+OUTPUT_DIR="$script_dir/svm_$(date +%Y%m%d_%H%M%S)"
+EMBEDDINGS_DIR="$script_dir/embeddings" 
 
 # Create directories
 mkdir -p ${OUTPUT_DIR}
@@ -47,3 +49,4 @@ python train_evo.py \
 echo "----------------------------------------"
 echo "SVM Classifier training completed at $(date)"
 echo "Results saved to: ${OUTPUT_DIR}"
+echo "TIME: END SVM training  = `date +"%Y-%m-%d %T"`"

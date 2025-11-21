@@ -11,18 +11,28 @@
 # This sbatch script processes a single CSV file
 # Usage: sbatch predict_single.sbatch <input_csv_file>
 
-# Change to project root directory (parent of scripts/)
-cd ${SLURM_SUBMIT_DIR}/..
-
-# Load modules
-module load python/3.9
-module load cuda/11.7
-
-# Activate conda environment
-source activate evo
-
 # Get input filename from command line argument
 INPUT_CSV=$1
+DATA_DIR=$2
+OUTPUT_DIR=$3
+MODEL_PATH=$4
+SCALER_PATH=$5
+
+# Get seed from command line argument
+SEED=$1
+
+script_dir="/uufs/chpc.utah.edu/common/home/u1323098/sundar-group-space2/EVO/EVO_embed_classify"
+
+cd ${script_dir}
+
+# Setup environment
+module load cuda
+nvidia-smi
+source activate evo
+
+# Create logs directory if it doesn't exist
+mkdir -p logs
+
 
 # Check if input file was provided
 if [ -z "$INPUT_CSV" ]; then
@@ -40,10 +50,6 @@ fi
 # Extract basename without extension for output naming
 BASENAME=$(basename "$INPUT_CSV" .csv)
 
-# Set paths
-OUTPUT_DIR="./predictions"
-MODEL_PATH="./results/nn_seed1/evo_nn_classifier.pt"
-SCALER_PATH="./results/nn_seed1/evo_scaler.joblib"
 OUTPUT_CSV="${OUTPUT_DIR}/${BASENAME}_predictions.csv"
 
 # Create output directory if it doesn't exist

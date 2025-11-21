@@ -8,26 +8,27 @@
 #SBATCH --output=logs/nn_%j.out
 #SBATCH --error=logs/nn_%j.err
 
-# Change to project root directory (parent of scripts/)
-cd ${SLURM_SUBMIT_DIR}/..
+# Get seed from command line argument
+SEED=$1
 
-# Load required modules
-module load python/3.9
-module load cuda/11.7  # Adjust CUDA version as needed
+script_dir="/uufs/chpc.utah.edu/common/home/u1323098/sundar-group-space2/EVO/EVO_embed_classify"
 
-# Activate conda environment if needed
-# source activate your_env_name
+cd ${script_dir}
+
+# Setup environment
+module load cuda
+nvidia-smi
+source activate evo
+
+echo "TIME: START nn training  = `date +"%Y-%m-%d %T"`"
 
 # Create logs directory if it doesn't exist
 mkdir -p logs
 
-# Get seed from command line argument
-SEED=$1
-
 # Set paths
-INPUT_DIR="./data"  # Update this path
-OUTPUT_DIR="./results/nn_seed${SEED}"  # Results will be saved here with seed in path
-EMBEDDINGS_DIR="./embeddings"  # Shared embeddings directory
+INPUT_DIR="$script_dir/CSV"  
+OUTPUT_DIR="$script_dir/nn_seed{SEED}_$(date +%Y%m%d_%H%M%S)"
+EMBEDDINGS_DIR="$script_dir/embeddings" 
 
 # Create directories
 mkdir -p ${OUTPUT_DIR}
@@ -58,3 +59,4 @@ python train_evo.py \
 echo "----------------------------------------"
 echo "Neural Network Classifier training completed at $(date)"
 echo "Results saved to: ${OUTPUT_DIR}"
+echo "TIME: END nn training  = `date +"%Y-%m-%d %T"`"
