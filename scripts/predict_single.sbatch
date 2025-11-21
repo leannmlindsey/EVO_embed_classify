@@ -9,17 +9,13 @@
 #SBATCH --error=logs/predict_%j.err
 
 # This sbatch script processes a single CSV file
-# Usage: sbatch predict_single.sbatch <input_csv_file>
+# Usage: sbatch predict_single.sbatch <input_csv_file> <output_dir> <model_path> <scaler_path>
 
-# Get input filename from command line argument
+# Get parameters from command line arguments
 INPUT_CSV=$1
-DATA_DIR=$2
-OUTPUT_DIR=$3
-MODEL_PATH=$4
-SCALER_PATH=$5
-
-# Get seed from command line argument
-SEED=$1
+OUTPUT_DIR=$2
+MODEL_PATH=$3
+SCALER_PATH=$4
 
 script_dir="/uufs/chpc.utah.edu/common/home/u1323098/sundar-group-space2/EVO/EVO_embed_classify"
 

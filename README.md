@@ -47,11 +47,22 @@ python predict_evo.py \
     --device cuda
 ```
 
-### Batch Prediction (78 files)
+### Batch Prediction
 
 ```bash
-# Submit all CSV files in a directory
-./scripts/submit_all_predictions.sh /path/to/csv/directory
+# Submit all CSV files in a directory for parallel processing
+./scripts/submit_all_predictions.sh \
+    /path/to/csv/directory \
+    /path/to/output \
+    /path/to/model.pt \
+    /path/to/scaler.joblib
+
+# Example with actual paths
+./scripts/submit_all_predictions.sh \
+    ./data/to_predict \
+    ./predictions \
+    ./results/nn_seed42/evo_nn_classifier.pt \
+    ./results/nn_seed42/evo_scaler.joblib
 ```
 
 ## Installation
@@ -109,6 +120,8 @@ pip install torch scikit-learn pandas numpy tqdm matplotlib seaborn
 
 ## Input Data Format
 
+### Training Data
+
 Training data should be CSV files with:
 - `sequence` column: DNA sequences
 - `label` column: Binary labels (0 or 1)
@@ -117,6 +130,35 @@ Training data should be CSV files with:
 sequence,label
 ATCGATCGATCG,0
 GCTAGCTAGCTA,1
+```
+
+### Prediction Data
+
+Prediction input should be a CSV file with at minimum:
+- `sequence` column: DNA sequences to classify
+
+```csv
+sequence
+ATCGATCGATCG
+GCTAGCTAGCTA
+```
+
+## Prediction Parameters
+
+When using the SLURM prediction scripts, you need to provide 4 parameters:
+
+1. **Data Directory**: Directory containing CSV files to predict
+2. **Output Directory**: Directory where predictions will be saved
+3. **Model Path**: Path to trained model checkpoint (`.pt` for NN, `.joblib` for Linear/SVM)
+4. **Scaler Path**: Path to the saved scaler file (`.joblib`)
+
+Example:
+```bash
+./scripts/submit_all_predictions.sh \
+    ./data/to_predict \           # Directory with CSV files to process
+    ./predictions \                # Output directory
+    ./results/nn/evo_nn_classifier.pt \  # Trained model
+    ./results/nn/evo_scaler.joblib       # Scaler file
 ```
 
 ## Usage Examples
@@ -139,6 +181,24 @@ sbatch scripts/train_nn.sbatch 42
 ```bash
 # Automatically submit 10 jobs with seeds 1-10
 ./scripts/run_nn_10x.sh
+```
+
+### Run Predictions on SLURM Cluster
+
+```bash
+# Single file prediction
+sbatch scripts/predict_single.sbatch \
+    /path/to/input.csv \
+    /path/to/output \
+    /path/to/model.pt \
+    /path/to/scaler.joblib
+
+# Batch prediction - submits one job per CSV file in directory
+./scripts/submit_all_predictions.sh \
+    /path/to/csv/directory \
+    /path/to/output \
+    /path/to/model.pt \
+    /path/to/scaler.joblib
 ```
 
 ### Calculate Silhouette Score Only
@@ -271,5 +331,23 @@ If you use this code, please cite the EVO model:
 - Check paths to input files
 - Ensure `train.csv`, `dev.csv`, `test.csv` exist in `input_dir`
 - Verify model and scaler paths for predictions
+- For batch predictions, ensure all 4 parameters are provided:
+  - Data directory (containing CSV files to process)
+  - Output directory
+  - Model path (`.pt` or `.joblib`)
+  - Scaler path (`.joblib`)
+
+### Prediction Job Monitoring
+
+```bash
+# Check status of submitted jobs
+squeue -u $USER
+
+# View prediction logs
+tail -f logs/predict_*.out
+
+# Check prediction output
+ls -lh predictions/
+```
 
 See individual guide documents in `docs/` for more detailed troubleshooting.
