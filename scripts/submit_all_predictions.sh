@@ -19,10 +19,10 @@ if [ $# -lt 4 ]; then
     exit 1
 fi
 
-DATA_DIR=$1
-OUTPUT_DIR=$2
-MODEL_PATH=$3
-SCALER_PATH=$4
+DATA_DIR="/uufs/chpc.utah.edu/common/home/u1323098/sundar-group-space2/PHAGE_HOST/EMBEDDINGS/GENOMES/CSV/TEST"
+OUTPUT_DIR="/uufs/chpc.utah.edu/common/home/u1323098/sundar-group-space2/EVO/EVO_GENOME_RESULTS"
+MODEL_PATH="/uufs/chpc.utah.edu/common/home/u1323098/sundar-group-space2/PHAGE_HOST/EMBEDDINGS/results/nn/evo_nn_classifier.pt"
+SCALER_PATH="/uufs/chpc.utah.edu/common/home/u1323098/sundar-group-space2/PHAGE_HOST/EMBEDDINGS/results/nn/evo_scaler.joblib"
 
 # Check if data directory exists
 if [ ! -d "$DATA_DIR" ]; then
