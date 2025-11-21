@@ -2,7 +2,7 @@
 #SBATCH --job-name=evo_predict
 #SBATCH --account=soc-gpu-np
 #SBATCH --partition=soc-gpu-np
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:a100:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=02:00:00

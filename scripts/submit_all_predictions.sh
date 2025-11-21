@@ -5,20 +5,6 @@
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(dirname "$0")"
-
-# Check if all required arguments are provided
-if [ $# -lt 4 ]; then
-    echo "Error: Missing required arguments"
-    echo "Usage: ./submit_all_predictions.sh <data_dir> <output_dir> <model_path> <scaler_path>"
-    echo ""
-    echo "Arguments:"
-    echo "  data_dir: Directory containing CSV files to process"
-    echo "  output_dir: Directory where predictions will be saved"
-    echo "  model_path: Path to the trained model checkpoint"
-    echo "  scaler_path: Path to the saved scaler file"
-    exit 1
-fi
-
 DATA_DIR="/uufs/chpc.utah.edu/common/home/u1323098/sundar-group-space2/PHAGE_HOST/EMBEDDINGS/GENOMES/CSV/TEST"
 OUTPUT_DIR="/uufs/chpc.utah.edu/common/home/u1323098/sundar-group-space2/EVO/EVO_GENOME_RESULTS"
 MODEL_PATH="/uufs/chpc.utah.edu/common/home/u1323098/sundar-group-space2/PHAGE_HOST/EMBEDDINGS/results/nn/evo_nn_classifier.pt"
