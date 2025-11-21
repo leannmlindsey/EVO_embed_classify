@@ -16,6 +16,117 @@ import os
 import sys
 
 
+class ThreeLayerNN(nn.Module):
+    """
+    Three-layer neural network for binary classification
+
+    Architecture:
+    - Input layer: input_dim
+    - Hidden layer 1: hidden_dim1 with ReLU activation and Dropout
+    - Hidden layer 2: hidden_dim2 with ReLU activation and Dropout
+    - Output layer: 1 (sigmoid activation for binary classification)
+    """
+    def __init__(self, input_dim, hidden_dim1=256, hidden_dim2=128, dropout=0.3):
+        super(ThreeLayerNN, self).__init__()
+        self.fc1 = nn.Linear(input_dim, hidden_dim1)
+        self.fc2 = nn.Linear(hidden_dim1, hidden_dim2)
+        self.fc3 = nn.Linear(hidden_dim2, 1)
+        self.dropout = nn.Dropout(dropout)
+        self.relu = nn.ReLU()
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.relu(x)
+        x = self.dropout(x)
+        x = self.fc2(x)
+        x = self.relu(x)
+        x = self.dropout(x)
+        x = self.fc3(x)
+        x = self.sigmoid(x)
+        return x
+
+
+class NeuralNetworkClassifier:
+    """
+    Wrapper class for PyTorch neural network to provide scikit-learn-like interface
+    """
+    def __init__(self, input_dim, hidden_dim1=256, hidden_dim2=128, dropout=0.3,
+                 learning_rate=0.001, epochs=100, batch_size=32, device='cpu'):
+        self.input_dim = input_dim
+        self.hidden_dim1 = hidden_dim1
+        self.hidden_dim2 = hidden_dim2
+        self.dropout = dropout
+        self.learning_rate = learning_rate
+        self.epochs = epochs
+        self.batch_size = batch_size
+        self.device = torch.device(device)
+        self.model = None
+        self.criterion = nn.BCELoss()
+
+    def fit(self, X, y):
+        """Train the neural network"""
+        # Initialize model
+        self.model = ThreeLayerNN(
+            self.input_dim,
+            self.hidden_dim1,
+            self.hidden_dim2,
+            self.dropout
+        ).to(self.device)
+
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
+
+        # Convert to tensors
+        X_tensor = torch.FloatTensor(X).to(self.device)
+        y_tensor = torch.FloatTensor(y).unsqueeze(1).to(self.device)
+
+        # Training loop
+        self.model.train()
+        for epoch in range(self.epochs):
+            # Shuffle data
+            perm = torch.randperm(X_tensor.size(0))
+            X_shuffled = X_tensor[perm]
+            y_shuffled = y_tensor[perm]
+
+            epoch_loss = 0
+            for i in range(0, len(X_shuffled), self.batch_size):
+                batch_X = X_shuffled[i:i+self.batch_size]
+                batch_y = y_shuffled[i:i+self.batch_size]
+
+                optimizer.zero_grad()
+                outputs = self.model(batch_X)
+                loss = self.criterion(outputs, batch_y)
+                loss.backward()
+                optimizer.step()
+
+                epoch_loss += loss.item()
+
+            if (epoch + 1) % 20 == 0:
+                avg_loss = epoch_loss / (len(X_shuffled) / self.batch_size)
+                print(f"Epoch [{epoch+1}/{self.epochs}], Loss: {avg_loss:.4f}")
+
+        return self
+
+    def predict(self, X):
+        """Predict class labels"""
+        self.model.eval()
+        with torch.no_grad():
+            X_tensor = torch.FloatTensor(X).to(self.device)
+            outputs = self.model(X_tensor)
+            predictions = (outputs.cpu().numpy() > 0.5).astype(int).flatten()
+        return predictions
+
+    def predict_proba(self, X):
+        """Predict class probabilities"""
+        self.model.eval()
+        with torch.no_grad():
+            X_tensor = torch.FloatTensor(X).to(self.device)
+            outputs = self.model(X_tensor)
+            proba = outputs.cpu().numpy().flatten()
+        # Return probabilities for both classes
+        return np.column_stack([1 - proba, proba])
+
+
 def extract_embeddings(df, model_name, device, batch_size=1, pooling='mean'):
     """
     Extract embeddings from EVO model using monkey patching
@@ -107,7 +218,7 @@ def load_nn_classifier(model_path, device):
         model: Loaded NN classifier
     """
     print(f"Loading trained model from {model_path}...")
-    model = torch.load(model_path, map_location=device)
+    model = torch.load(model_path, map_location=device, weights_only=False)
     model.device = torch.device(device)  # Update device
     print("  ✓ Model loaded successfully")
     return model
