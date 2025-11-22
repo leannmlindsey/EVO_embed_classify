@@ -76,7 +76,9 @@ python predict_evo.py \
     --scaler ${SCALER_PATH} \
     --model_name evo-1.5-8k-base \
     --pooling mean \
-    --device cuda
+    --device cuda \
+    --batch_size 128 \ 
+    --true_batching
 
 # Calculate duration
 END_TIME=$(date +%s)

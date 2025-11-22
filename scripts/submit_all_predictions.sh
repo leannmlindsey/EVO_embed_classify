@@ -5,7 +5,7 @@
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(dirname "$0")"
-DATA_DIR="/uufs/chpc.utah.edu/common/home/u1323098/sundar-group-space2/PHAGE_HOST/EMBEDDINGS/GENOMES/CSV/TEST"
+DATA_DIR="/uufs/chpc.utah.edu/common/home/u1323098/sundar-group-space2/PHAGE_HOST/EMBEDDINGS/GENOMES/CSV"
 OUTPUT_DIR="/uufs/chpc.utah.edu/common/home/u1323098/sundar-group-space2/EVO/EVO_GENOME_RESULTS"
 MODEL_PATH="/uufs/chpc.utah.edu/common/home/u1323098/sundar-group-space2/PHAGE_HOST/EMBEDDINGS/results/nn/evo_nn_classifier.pt"
 SCALER_PATH="/uufs/chpc.utah.edu/common/home/u1323098/sundar-group-space2/PHAGE_HOST/EMBEDDINGS/results/nn/evo_scaler.joblib"
