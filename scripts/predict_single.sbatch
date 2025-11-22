@@ -77,7 +77,7 @@ python predict_evo.py \
     --model_name evo-1.5-8k-base \
     --pooling mean \
     --device cuda \
-    --batch_size 128 \
+    --batch_size 16 \
     --true_batching
 
 # Calculate duration
