@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Wrapper script to run comprehensive prediction analysis
+# Wrapper script to run prediction analysis
 
 SCRIPT_DIR="$(dirname "$0")"
 
@@ -22,7 +22,7 @@ if [ $# -lt 2 ]; then
     echo "  ./run_metrics_analysis.sh ./CSV ./results/metrics_by_seqid.csv SeqID"
     echo ""
     echo "  # Stratified by multiple columns"
-    echo "  ./run_metrics_analysis.sh ./CSV ./results/metrics_stratified.csv SeqID bacterial_phylum"
+    echo "  ./run_metrics_analysis.sh ./CSV ./results/metrics.csv SeqID bacterial_phylum"
     exit 1
 fi
 
@@ -41,7 +41,7 @@ fi
 OUTPUT_DIR=$(dirname "$OUTPUT_CSV")
 mkdir -p "$OUTPUT_DIR"
 
-echo "Running comprehensive prediction analysis..."
+echo "Running prediction analysis..."
 echo "Predictions dir: $PREDICTIONS_DIR"
 echo "Output: $OUTPUT_CSV"
 if [ -n "$GROUP_BY" ]; then

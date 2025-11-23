@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Comprehensive prediction analysis script.
+Simple prediction analysis script.
 Calculates metrics (TP, FP, TN, FN, MCC, F1, accuracy, precision, recall)
-with standard deviations and supports stratified analysis by metadata groups.
+by comparing predicted_label vs label columns.
 """
 
 import argparse
@@ -14,6 +14,7 @@ from sklearn.metrics import (
     f1_score, matthews_corrcoef
 )
 import warnings
+import time
 warnings.filterwarnings('ignore')
 
 
@@ -30,49 +31,17 @@ def calculate_metrics(y_true, y_pred):
     mcc = matthews_corrcoef(y_true, y_pred)
 
     return {
-        'TP': tp,
-        'FP': fp,
-        'TN': tn,
-        'FN': fn,
-        'accuracy': accuracy,
-        'precision': precision,
-        'recall': recall,
-        'f1_score': f1,
-        'mcc': mcc,
+        'TP': int(tp),
+        'FP': int(fp),
+        'TN': int(tn),
+        'FN': int(fn),
+        'accuracy': float(accuracy),
+        'precision': float(precision),
+        'recall': float(recall),
+        'f1_score': float(f1),
+        'mcc': float(mcc),
         'n_samples': len(y_true)
     }
-
-
-def bootstrap_metrics(y_true, y_pred, n_bootstrap=1000, random_state=42):
-    """Calculate metrics with confidence intervals using bootstrap."""
-    np.random.seed(random_state)
-    n_samples = len(y_true)
-
-    metrics_bootstrap = []
-
-    for _ in range(n_bootstrap):
-        # Resample with replacement
-        indices = np.random.choice(n_samples, size=n_samples, replace=True)
-        y_true_boot = y_true[indices]
-        y_pred_boot = y_pred[indices]
-
-        # Calculate metrics
-        metrics = calculate_metrics(y_true_boot, y_pred_boot)
-        metrics_bootstrap.append(metrics)
-
-    # Convert to DataFrame for easy calculation
-    df_boot = pd.DataFrame(metrics_bootstrap)
-
-    # Calculate standard deviations
-    std_metrics = {
-        'accuracy_std': df_boot['accuracy'].std(),
-        'precision_std': df_boot['precision'].std(),
-        'recall_std': df_boot['recall'].std(),
-        'f1_score_std': df_boot['f1_score'].std(),
-        'mcc_std': df_boot['mcc'].std()
-    }
-
-    return std_metrics
 
 
 def analyze_predictions(predictions_df, group_by=None):
@@ -96,17 +65,12 @@ def analyze_predictions(predictions_df, group_by=None):
 
     if group_by is None:
         # Overall metrics
+        print(f"   Computing metrics for overall dataset ({len(predictions_df):,} samples)...")
         y_true = predictions_df['label'].values
         y_pred = predictions_df['predicted_label'].values
 
         metrics = calculate_metrics(y_true, y_pred)
-        std_metrics = bootstrap_metrics(y_true, y_pred)
-
-        result = {
-            'group': 'Overall',
-            **metrics,
-            **std_metrics
-        }
+        result = {'group': 'Overall', **metrics}
         results.append(result)
 
     else:
@@ -121,29 +85,23 @@ def analyze_predictions(predictions_df, group_by=None):
             return pd.DataFrame()
 
         # Overall metrics first
+        print(f"   Computing overall metrics ({len(predictions_df):,} samples)...")
         y_true = predictions_df['label'].values
         y_pred = predictions_df['predicted_label'].values
 
         metrics = calculate_metrics(y_true, y_pred)
-        std_metrics = bootstrap_metrics(y_true, y_pred)
-
-        result = {
-            'group': 'Overall',
-            **metrics,
-            **std_metrics
-        }
+        result = {'group': 'Overall', **metrics}
         results.append(result)
 
+        # Count groups
+        grouped = predictions_df.groupby(group_by)
+        n_groups = len(grouped)
+        print(f"   Computing metrics for {n_groups} groups...")
+
         # Group-wise metrics
-        for group_name, group_df in predictions_df.groupby(group_by):
+        for i, (group_name, group_df) in enumerate(grouped, 1):
             if len(group_df) < 10:  # Skip very small groups
                 continue
-
-            y_true = group_df['label'].values
-            y_pred = group_df['predicted_label'].values
-
-            metrics = calculate_metrics(y_true, y_pred)
-            std_metrics = bootstrap_metrics(y_true, y_pred)
 
             # Format group name
             if isinstance(group_name, tuple):
@@ -151,11 +109,13 @@ def analyze_predictions(predictions_df, group_by=None):
             else:
                 group_str = str(group_name)
 
-            result = {
-                'group': group_str,
-                **metrics,
-                **std_metrics
-            }
+            print(f"   [{i}/{n_groups}] Processing group: {group_str} ({len(group_df):,} samples)")
+
+            y_true = group_df['label'].values
+            y_pred = group_df['predicted_label'].values
+
+            metrics = calculate_metrics(y_true, y_pred)
+            result = {'group': group_str, **metrics}
             results.append(result)
 
     return pd.DataFrame(results)
@@ -177,14 +137,14 @@ def collect_all_predictions(predictions_dir):
         raise ValueError(f"No prediction files found in {predictions_dir}")
 
     combined = pd.concat(all_predictions, ignore_index=True)
-    print(f"Collected {len(all_predictions)} prediction files with {len(combined)} total predictions")
+    print(f"   Collected {len(all_predictions)} prediction files with {len(combined):,} total predictions")
 
     return combined
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Analyze predictions with comprehensive metrics'
+        description='Analyze predictions with classification metrics'
     )
     parser.add_argument(
         '--predictions_dir',
@@ -205,23 +165,20 @@ def main():
         default=None,
         help='Column name(s) to group by (e.g., SeqID bacterial_phylum)'
     )
-    parser.add_argument(
-        '--bootstrap',
-        type=int,
-        default=1000,
-        help='Number of bootstrap iterations for standard deviation (default: 1000)'
-    )
 
     args = parser.parse_args()
 
+    start_time = time.time()
+
     print("=" * 60)
-    print("Comprehensive Prediction Analysis")
+    print("Prediction Analysis")
     print("=" * 60)
 
     # Collect all predictions (which already contain both labels and predictions)
     print("\n1. Collecting predictions...")
+    t0 = time.time()
     predictions = collect_all_predictions(args.predictions_dir)
-    print(f"   Total samples: {len(predictions)}")
+    print(f"   Time: {time.time() - t0:.2f}s")
 
     # Verify required columns exist
     if 'label' not in predictions.columns:
@@ -231,11 +188,15 @@ def main():
 
     # Analyze predictions
     print("\n2. Calculating metrics...")
+    t0 = time.time()
     results = analyze_predictions(predictions, group_by=args.group_by)
+    print(f"   Time: {time.time() - t0:.2f}s")
 
     # Save results
     print(f"\n3. Saving results to {args.output}...")
+    t0 = time.time()
     results.to_csv(args.output, index=False)
+    print(f"   Time: {time.time() - t0:.2f}s")
 
     # Print summary
     print("\n" + "=" * 60)
@@ -246,16 +207,12 @@ def main():
     display_cols = ['group', 'n_samples', 'TP', 'FP', 'TN', 'FN',
                     'accuracy', 'precision', 'recall', 'f1_score', 'mcc']
 
-    print("\nConfusion Matrix & Metrics:")
+    print("\nMetrics:")
     print(results[display_cols].to_string(index=False))
-
-    print("\nStandard Deviations:")
-    std_cols = ['group', 'accuracy_std', 'precision_std', 'recall_std',
-                'f1_score_std', 'mcc_std']
-    print(results[std_cols].to_string(index=False))
 
     print("\n" + "=" * 60)
     print(f"Full results saved to: {args.output}")
+    print(f"Total time: {time.time() - start_time:.2f}s")
     print("=" * 60)
 
 
