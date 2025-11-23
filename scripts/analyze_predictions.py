@@ -75,37 +75,29 @@ def bootstrap_metrics(y_true, y_pred, n_bootstrap=1000, random_state=42):
     return std_metrics
 
 
-def analyze_predictions(predictions_df, ground_truth_df, group_by=None):
+def analyze_predictions(predictions_df, group_by=None):
     """
-    Analyze predictions against ground truth.
+    Analyze predictions that already contain both true and predicted labels.
 
     Args:
-        predictions_df: DataFrame with predictions (must have 'predicted_class' column)
-        ground_truth_df: DataFrame with true labels (must have 'label' column)
-        group_by: Column name(s) to group by (e.g., 'phylum', 'bacterial_phylum')
+        predictions_df: DataFrame with both 'label' and 'predicted_label' columns
+        group_by: Column name(s) to group by (e.g., 'SeqID', 'bacterial_phylum')
 
     Returns:
         DataFrame with metrics
     """
-    # Merge predictions with ground truth (assuming common 'sequence' or index)
-    if 'sequence' in predictions_df.columns and 'sequence' in ground_truth_df.columns:
-        merged = predictions_df.merge(ground_truth_df, on='sequence', how='inner')
-    else:
-        # Merge on index
-        merged = predictions_df.join(ground_truth_df, how='inner', rsuffix='_true')
-
     # Ensure we have the required columns
-    if 'predicted_class' not in merged.columns:
-        raise ValueError("predictions_df must have 'predicted_class' column")
-    if 'label' not in merged.columns:
-        raise ValueError("ground_truth_df must have 'label' column")
+    if 'label' not in predictions_df.columns:
+        raise ValueError("predictions_df must have 'label' column")
+    if 'predicted_label' not in predictions_df.columns:
+        raise ValueError("predictions_df must have 'predicted_label' column")
 
     results = []
 
     if group_by is None:
         # Overall metrics
-        y_true = merged['label'].values
-        y_pred = merged['predicted_class'].values
+        y_true = predictions_df['label'].values
+        y_pred = predictions_df['predicted_label'].values
 
         metrics = calculate_metrics(y_true, y_pred)
         std_metrics = bootstrap_metrics(y_true, y_pred)
@@ -123,14 +115,14 @@ def analyze_predictions(predictions_df, ground_truth_df, group_by=None):
             group_by = [group_by]
 
         # Check if group columns exist
-        missing_cols = [col for col in group_by if col not in merged.columns]
+        missing_cols = [col for col in group_by if col not in predictions_df.columns]
         if missing_cols:
             print(f"Warning: Missing columns {missing_cols} in data. Skipping grouped analysis.")
             return pd.DataFrame()
 
         # Overall metrics first
-        y_true = merged['label'].values
-        y_pred = merged['predicted_class'].values
+        y_true = predictions_df['label'].values
+        y_pred = predictions_df['predicted_label'].values
 
         metrics = calculate_metrics(y_true, y_pred)
         std_metrics = bootstrap_metrics(y_true, y_pred)
@@ -143,12 +135,12 @@ def analyze_predictions(predictions_df, ground_truth_df, group_by=None):
         results.append(result)
 
         # Group-wise metrics
-        for group_name, group_df in merged.groupby(group_by):
+        for group_name, group_df in predictions_df.groupby(group_by):
             if len(group_df) < 10:  # Skip very small groups
                 continue
 
             y_true = group_df['label'].values
-            y_pred = group_df['predicted_class'].values
+            y_pred = group_df['predicted_label'].values
 
             metrics = calculate_metrics(y_true, y_pred)
             std_metrics = bootstrap_metrics(y_true, y_pred)
@@ -198,13 +190,7 @@ def main():
         '--predictions_dir',
         type=str,
         required=True,
-        help='Directory containing prediction CSV files (*_predictions.csv)'
-    )
-    parser.add_argument(
-        '--ground_truth',
-        type=str,
-        required=True,
-        help='CSV file with ground truth labels (must have "sequence" and "label" columns)'
+        help='Directory containing prediction CSV files (*_predictions.csv) with "label" and "predicted_label" columns'
     )
     parser.add_argument(
         '--output',
@@ -217,7 +203,7 @@ def main():
         type=str,
         nargs='+',
         default=None,
-        help='Column name(s) to group by (e.g., bacterial_phylum phage_phylum)'
+        help='Column name(s) to group by (e.g., SeqID bacterial_phylum)'
     )
     parser.add_argument(
         '--bootstrap',
@@ -232,21 +218,23 @@ def main():
     print("Comprehensive Prediction Analysis")
     print("=" * 60)
 
-    # Collect all predictions
+    # Collect all predictions (which already contain both labels and predictions)
     print("\n1. Collecting predictions...")
     predictions = collect_all_predictions(args.predictions_dir)
+    print(f"   Total samples: {len(predictions)}")
 
-    # Load ground truth
-    print(f"\n2. Loading ground truth from {args.ground_truth}...")
-    ground_truth = pd.read_csv(args.ground_truth)
-    print(f"   Ground truth samples: {len(ground_truth)}")
+    # Verify required columns exist
+    if 'label' not in predictions.columns:
+        raise ValueError("Prediction files must contain 'label' column")
+    if 'predicted_label' not in predictions.columns:
+        raise ValueError("Prediction files must contain 'predicted_label' column")
 
     # Analyze predictions
-    print("\n3. Calculating metrics...")
-    results = analyze_predictions(predictions, ground_truth, group_by=args.group_by)
+    print("\n2. Calculating metrics...")
+    results = analyze_predictions(predictions, group_by=args.group_by)
 
     # Save results
-    print(f"\n4. Saving results to {args.output}...")
+    print(f"\n3. Saving results to {args.output}...")
     results.to_csv(args.output, index=False)
 
     # Print summary
