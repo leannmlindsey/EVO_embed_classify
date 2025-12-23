@@ -87,6 +87,47 @@ def extract_embeddings(df, model_name, device, batch_size=1, pooling='mean', che
 
     model.unembed = CustomEmbedding()
 
+    # Enable FlashDepthwiseConv1d to avoid 32-bit indexing limits with large batch sizes
+    print("Enabling FlashDepthwiseConv1d for better performance with large batches...")
+    try:
+        from flashfftconv import FlashDepthwiseConv1d
+
+        # Iterate through all layers and replace F.conv1d with FlashDepthwiseConv1d
+        for layer_idx, layer in enumerate(model.backbone.layers):
+            # Check if this layer has a hyena filter
+            if hasattr(layer, 'filter') and hasattr(layer.filter, 'fir_fn'):
+                # Only replace if it's using F.conv1d
+                if layer.filter.fir_fn == torch.nn.functional.conv1d:
+                    # Get the short filter parameters
+                    short_filter_weight = layer.filter.short_filter_weight
+                    short_filter_bias = layer.filter.short_filter_bias if hasattr(layer.filter, 'short_filter_bias') else None
+
+                    # Create FlashDepthwiseConv1d instance
+                    # Note: channels = short_filter_weight.shape[0], kernel_size = short_filter_weight.shape[2]
+                    channels = short_filter_weight.shape[0]
+                    kernel_size = short_filter_weight.shape[2]
+
+                    flash_conv = FlashDepthwiseConv1d(
+                        channels=channels,
+                        kernel_size=kernel_size,
+                        padding=kernel_size - 1,
+                        device=device
+                    )
+
+                    # Copy weights and bias
+                    flash_conv.weight.data = short_filter_weight.data
+                    if short_filter_bias is not None and hasattr(flash_conv, 'bias') and flash_conv.bias is not None:
+                        flash_conv.bias.data = short_filter_bias.data
+
+                    # Replace the fir_fn
+                    layer.filter.fir_fn = flash_conv
+                    print(f"  Replaced F.conv1d with FlashDepthwiseConv1d in layer {layer_idx}")
+
+        print("FlashDepthwiseConv1d enabled successfully!")
+    except ImportError:
+        print("Warning: flashfftconv not installed. Using standard F.conv1d (may have batch size limitations).")
+        print("To install: pip install flashfftconv")
+
     print(f"Extracting embeddings from index {start_idx} to {len(df)}...")
     current_chunk_embeddings = []
     current_chunk_labels = []
