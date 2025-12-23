@@ -129,6 +129,7 @@ def extract_embeddings(df, model_name, device, batch_size=1, pooling='mean', che
         print("To install: pip install flashfftconv")
 
     print(f"Extracting embeddings from index {start_idx} to {len(df)}...")
+    print(f"Using TRUE BATCHING with batch_size={batch_size} for parallel processing")
     current_chunk_embeddings = []
     current_chunk_labels = []
     current_chunk_md5s = []
@@ -137,39 +138,59 @@ def extract_embeddings(df, model_name, device, batch_size=1, pooling='mean', che
     with torch.no_grad():
         for i in tqdm(range(start_idx, len(df), batch_size)):
             batch_df = df.iloc[i:i+batch_size]
-            embeddings_batch = []
-            labels_batch = []
-            md5s_batch = []
 
-            for _, row in batch_df.iterrows():
-                sequence = row['sequence']
-                label = row['label']
-                md5_hash = row['md5']
+            # Extract sequences, labels, and md5s for this batch
+            sequences = batch_df['sequence'].tolist()
+            labels_batch = batch_df['label'].tolist()
+            md5s_batch = batch_df['md5'].tolist()
 
-                # Tokenize the sequence
-                input_ids = torch.tensor(
-                    tokenizer.tokenize(sequence),
-                    dtype=torch.int
-                ).unsqueeze(0).to(device)
+            # Tokenize all sequences in the batch
+            tokenized_seqs = [tokenizer.tokenize(seq) for seq in sequences]
 
-                # Get embeddings (with monkey patch, the model output is now the embeddings)
-                embed, _ = model(input_ids)
+            # Find max length in this batch for padding
+            max_len = max(len(seq) for seq in tokenized_seqs)
 
-                # Apply pooling strategy
-                if pooling == 'mean':
-                    pooled_embedding = embed.mean(dim=1).to(torch.float32).cpu().numpy()
-                elif pooling == 'max':
-                    pooled_embedding = torch.max(embed, dim=1)[0].to(torch.float32).cpu().numpy()
-                else:
-                    raise ValueError(f"Unknown pooling strategy: {pooling}")
+            # Pad sequences to same length and create attention mask
+            padded_seqs = []
+            attention_masks = []
+            for seq in tokenized_seqs:
+                seq_len = len(seq)
+                # Pad with 0 (assuming 0 is pad token)
+                padded_seq = seq + [0] * (max_len - seq_len)
+                padded_seqs.append(padded_seq)
+                # Create attention mask (1 for real tokens, 0 for padding)
+                attention_mask = [1] * seq_len + [0] * (max_len - seq_len)
+                attention_masks.append(attention_mask)
 
-                embeddings_batch.append(pooled_embedding)
-                labels_batch.append(label)
-                md5s_batch.append(md5_hash)
+            # Convert to tensor (batch_size, max_len)
+            input_ids = torch.tensor(padded_seqs, dtype=torch.int).to(device)
+            padding_mask = torch.tensor(attention_masks, dtype=torch.int).to(device)
+
+            # Process entire batch through model at once
+            embed, _ = model(input_ids, padding_mask=padding_mask)
+
+            # Apply pooling strategy to each sequence in batch
+            # embed shape: (batch_size, seq_len, hidden_dim)
+            if pooling == 'mean':
+                # Mask out padding before mean pooling
+                # Expand mask to match embedding dimensions
+                mask_expanded = padding_mask.unsqueeze(-1).float()  # (batch_size, seq_len, 1)
+                masked_embed = embed * mask_expanded  # Zero out padding positions
+                # Sum over sequence length and divide by actual length
+                sum_embed = masked_embed.sum(dim=1)  # (batch_size, hidden_dim)
+                seq_lengths = padding_mask.sum(dim=1, keepdim=True).float()  # (batch_size, 1)
+                pooled_embeddings = (sum_embed / seq_lengths).to(torch.float32).cpu().numpy()
+            elif pooling == 'max':
+                # For max pooling, set padding positions to very negative value
+                mask_expanded = padding_mask.unsqueeze(-1).float()  # (batch_size, seq_len, 1)
+                masked_embed = embed.clone()
+                masked_embed[mask_expanded == 0] = -1e9  # Set padding to very negative
+                pooled_embeddings = torch.max(masked_embed, dim=1)[0].to(torch.float32).cpu().numpy()
+            else:
+                raise ValueError(f"Unknown pooling strategy: {pooling}")
 
             # Add to current chunk
-            embeddings_batch = np.vstack(embeddings_batch)
-            current_chunk_embeddings.append(embeddings_batch)
+            current_chunk_embeddings.append(pooled_embeddings)
             current_chunk_labels.extend(labels_batch)
             current_chunk_md5s.extend(md5s_batch)
 
