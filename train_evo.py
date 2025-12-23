@@ -17,11 +17,56 @@ import os
 import time
 import argparse
 import random
+import hashlib
+import glob
 
-def extract_embeddings(df, model_name, device, batch_size=1, pooling='mean'):
-    """Extract embeddings from EVO model using monkey patching"""
+def compute_md5(sequence):
+    """Compute MD5 hash of a DNA sequence"""
+    return hashlib.md5(sequence.encode()).hexdigest()
+
+def extract_embeddings(df, model_name, device, batch_size=1, pooling='mean', checkpoint_dir=None, checkpoint_interval=1024):
+    """
+    Extract embeddings from EVO model using monkey patching with checkpointing support
+
+    Args:
+        df: DataFrame with 'sequence', 'label', and 'md5' columns
+        model_name: EVO model name
+        device: Device to use
+        batch_size: Batch size for processing
+        pooling: Pooling strategy ('mean' or 'max')
+        checkpoint_dir: Directory to save checkpoints (if None, no checkpointing)
+        checkpoint_interval: Number of sequences between checkpoints
+
+    Returns:
+        embeddings, labels, md5s: Arrays of embeddings, labels, and MD5 hashes
+    """
+    # Check for existing checkpoints and resume if possible
+    start_idx = 0
+    all_embeddings = []
+    all_labels = []
+    all_md5s = []
+
+    if checkpoint_dir is not None:
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        checkpoint_pattern = os.path.join(checkpoint_dir, "chunk_*.npz")
+        existing_checkpoints = sorted(glob.glob(checkpoint_pattern))
+
+        if existing_checkpoints:
+            print(f"Found {len(existing_checkpoints)} existing checkpoints. Loading...")
+            for ckpt_path in existing_checkpoints:
+                ckpt_data = np.load(ckpt_path)
+                all_embeddings.append(ckpt_data['embeddings'])
+                all_labels.extend(ckpt_data['labels'])
+                all_md5s.extend(ckpt_data['md5s'])
+                start_idx = len(all_labels)
+            print(f"Resumed from checkpoint. Starting at index {start_idx}/{len(df)}")
+
+            if start_idx >= len(df):
+                print("All embeddings already extracted!")
+                all_embeddings = np.vstack(all_embeddings)
+                return all_embeddings, np.array(all_labels), np.array(all_md5s)
+
     print(f"Loading EVO model: {model_name}...")
-
     try:
         from evo import Evo
     except ImportError:
@@ -42,19 +87,23 @@ def extract_embeddings(df, model_name, device, batch_size=1, pooling='mean'):
 
     model.unembed = CustomEmbedding()
 
-    print("Extracting embeddings...")
-    all_embeddings = []
-    all_labels = []
+    print(f"Extracting embeddings from index {start_idx} to {len(df)}...")
+    current_chunk_embeddings = []
+    current_chunk_labels = []
+    current_chunk_md5s = []
+    checkpoint_counter = start_idx // checkpoint_interval
 
     with torch.no_grad():
-        for i in tqdm(range(0, len(df), batch_size)):
+        for i in tqdm(range(start_idx, len(df), batch_size)):
             batch_df = df.iloc[i:i+batch_size]
             embeddings_batch = []
             labels_batch = []
+            md5s_batch = []
 
             for _, row in batch_df.iterrows():
                 sequence = row['sequence']
                 label = row['label']
+                md5_hash = row['md5']
 
                 # Tokenize the sequence
                 input_ids = torch.tensor(
@@ -67,27 +116,64 @@ def extract_embeddings(df, model_name, device, batch_size=1, pooling='mean'):
 
                 # Apply pooling strategy
                 if pooling == 'mean':
-                    # Mean pooling
                     pooled_embedding = embed.mean(dim=1).to(torch.float32).cpu().numpy()
                 elif pooling == 'max':
-                    # Max pooling
                     pooled_embedding = torch.max(embed, dim=1)[0].to(torch.float32).cpu().numpy()
                 else:
                     raise ValueError(f"Unknown pooling strategy: {pooling}")
 
                 embeddings_batch.append(pooled_embedding)
                 labels_batch.append(label)
+                md5s_batch.append(md5_hash)
 
-            # Concatenate embeddings from the batch
+            # Add to current chunk
             embeddings_batch = np.vstack(embeddings_batch)
-            all_embeddings.append(embeddings_batch)
-            all_labels.extend(labels_batch)
+            current_chunk_embeddings.append(embeddings_batch)
+            current_chunk_labels.extend(labels_batch)
+            current_chunk_md5s.extend(md5s_batch)
+
+            # Save checkpoint if interval reached
+            if checkpoint_dir is not None and len(current_chunk_labels) >= checkpoint_interval:
+                chunk_embeddings = np.vstack(current_chunk_embeddings)
+                checkpoint_path = os.path.join(checkpoint_dir, f"chunk_{checkpoint_counter:04d}.npz")
+                np.savez(checkpoint_path,
+                        embeddings=chunk_embeddings,
+                        labels=np.array(current_chunk_labels),
+                        md5s=np.array(current_chunk_md5s))
+                print(f"\nSaved checkpoint: {checkpoint_path} ({len(current_chunk_labels)} sequences)")
+
+                # Add to all_embeddings and reset current chunk
+                all_embeddings.append(chunk_embeddings)
+                all_labels.extend(current_chunk_labels)
+                all_md5s.extend(current_chunk_md5s)
+
+                current_chunk_embeddings = []
+                current_chunk_labels = []
+                current_chunk_md5s = []
+                checkpoint_counter += 1
+
+    # Save remaining sequences as final checkpoint
+    if current_chunk_embeddings:
+        chunk_embeddings = np.vstack(current_chunk_embeddings)
+        if checkpoint_dir is not None:
+            checkpoint_path = os.path.join(checkpoint_dir, f"chunk_{checkpoint_counter:04d}.npz")
+            np.savez(checkpoint_path,
+                    embeddings=chunk_embeddings,
+                    labels=np.array(current_chunk_labels),
+                    md5s=np.array(current_chunk_md5s))
+            print(f"\nSaved final checkpoint: {checkpoint_path} ({len(current_chunk_labels)} sequences)")
+
+        all_embeddings.append(chunk_embeddings)
+        all_labels.extend(current_chunk_labels)
+        all_md5s.extend(current_chunk_md5s)
 
     # Concatenate all embeddings
     all_embeddings = np.vstack(all_embeddings)
+    all_labels = np.array(all_labels)
+    all_md5s = np.array(all_md5s)
     print(f"Embeddings extracted. Shape: {all_embeddings.shape}")
 
-    return all_embeddings, np.array(all_labels)
+    return all_embeddings, all_labels, all_md5s
 def train_linear_classifier(X_train, y_train, X_val=None, y_val=None, C_values=None):
     """
     Train a logistic regression classifier on the embeddings
@@ -253,7 +339,8 @@ class NeuralNetworkClassifier:
     Wrapper class for PyTorch neural network to provide scikit-learn-like interface
     """
     def __init__(self, input_dim, hidden_dim1=256, hidden_dim2=128, dropout=0.3,
-                 learning_rate=0.001, epochs=100, batch_size=32, device='cpu'):
+                 learning_rate=0.001, epochs=100, batch_size=32, device='cpu',
+                 early_stopping_patience=10, use_wandb=False):
         self.input_dim = input_dim
         self.hidden_dim1 = hidden_dim1
         self.hidden_dim2 = hidden_dim2
@@ -262,11 +349,14 @@ class NeuralNetworkClassifier:
         self.epochs = epochs
         self.batch_size = batch_size
         self.device = torch.device(device)
+        self.early_stopping_patience = early_stopping_patience
+        self.use_wandb = use_wandb
         self.model = None
         self.criterion = nn.BCELoss()
+        self.history = {'train_loss': [], 'val_loss': [], 'val_accuracy': [], 'val_f1': []}
 
-    def fit(self, X, y):
-        """Train the neural network"""
+    def fit(self, X, y, X_val=None, y_val=None):
+        """Train the neural network with validation metrics and early stopping"""
         # Initialize model
         self.model = ThreeLayerNN(
             self.input_dim,
@@ -281,15 +371,27 @@ class NeuralNetworkClassifier:
         X_tensor = torch.FloatTensor(X).to(self.device)
         y_tensor = torch.FloatTensor(y).unsqueeze(1).to(self.device)
 
+        # Convert validation data if provided
+        has_validation = X_val is not None and y_val is not None
+        if has_validation:
+            X_val_tensor = torch.FloatTensor(X_val).to(self.device)
+            y_val_tensor = torch.FloatTensor(y_val).unsqueeze(1).to(self.device)
+
+        # Early stopping variables
+        best_val_loss = float('inf')
+        patience_counter = 0
+        best_model_state = None
+
         # Training loop
-        self.model.train()
         for epoch in range(self.epochs):
-            # Shuffle data
+            # Training phase
+            self.model.train()
             perm = torch.randperm(X_tensor.size(0))
             X_shuffled = X_tensor[perm]
             y_shuffled = y_tensor[perm]
 
             epoch_loss = 0
+            num_batches = 0
             for i in range(0, len(X_shuffled), self.batch_size):
                 batch_X = X_shuffled[i:i+self.batch_size]
                 batch_y = y_shuffled[i:i+self.batch_size]
@@ -301,10 +403,64 @@ class NeuralNetworkClassifier:
                 optimizer.step()
 
                 epoch_loss += loss.item()
+                num_batches += 1
 
-            if (epoch + 1) % 20 == 0:
-                avg_loss = epoch_loss / (len(X_shuffled) / self.batch_size)
-                print(f"Epoch [{epoch+1}/{self.epochs}], Loss: {avg_loss:.4f}")
+            avg_train_loss = epoch_loss / num_batches
+            self.history['train_loss'].append(avg_train_loss)
+
+            # Validation phase
+            if has_validation:
+                self.model.eval()
+                with torch.no_grad():
+                    val_outputs = self.model(X_val_tensor)
+                    val_loss = self.criterion(val_outputs, y_val_tensor).item()
+                    val_preds = (val_outputs.cpu().numpy() > 0.5).astype(int).flatten()
+                    val_accuracy = accuracy_score(y_val, val_preds)
+                    val_f1 = f1_score(y_val, val_preds)
+
+                self.history['val_loss'].append(val_loss)
+                self.history['val_accuracy'].append(val_accuracy)
+                self.history['val_f1'].append(val_f1)
+
+                # Print progress
+                print(f"Epoch [{epoch+1}/{self.epochs}] - "
+                      f"Train Loss: {avg_train_loss:.4f}, "
+                      f"Val Loss: {val_loss:.4f}, "
+                      f"Val Acc: {val_accuracy:.4f}, "
+                      f"Val F1: {val_f1:.4f}")
+
+                # Log to wandb if enabled
+                if self.use_wandb:
+                    try:
+                        import wandb
+                        wandb.log({
+                            'epoch': epoch + 1,
+                            'train_loss': avg_train_loss,
+                            'val_loss': val_loss,
+                            'val_accuracy': val_accuracy,
+                            'val_f1': val_f1
+                        })
+                    except ImportError:
+                        pass
+
+                # Early stopping check
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    patience_counter = 0
+                    # Save best model state
+                    best_model_state = {k: v.cpu().clone() for k, v in self.model.state_dict().items()}
+                else:
+                    patience_counter += 1
+                    if patience_counter >= self.early_stopping_patience:
+                        print(f"Early stopping triggered after {epoch+1} epochs")
+                        # Restore best model
+                        if best_model_state is not None:
+                            self.model.load_state_dict({k: v.to(self.device) for k, v in best_model_state.items()})
+                        break
+            else:
+                # No validation data, just print training loss
+                if (epoch + 1) % 10 == 0:
+                    print(f"Epoch [{epoch+1}/{self.epochs}], Train Loss: {avg_train_loss:.4f}")
 
         return self
 
@@ -327,7 +483,7 @@ class NeuralNetworkClassifier:
         # Return probabilities for both classes
         return np.column_stack([1 - proba, proba])
 
-def train_nn_classifier(X_train, y_train, X_val=None, y_val=None, device='cpu'):
+def train_nn_classifier(X_train, y_train, X_val=None, y_val=None, device='cpu', use_wandb=False):
     """
     Train a 3-layer neural network classifier on the embeddings
 
@@ -337,6 +493,7 @@ def train_nn_classifier(X_train, y_train, X_val=None, y_val=None, device='cpu'):
         X_val: Validation embeddings (optional)
         y_val: Validation labels (optional)
         device: Device to use for training ('cpu' or 'cuda')
+        use_wandb: Whether to log to wandb (default: False)
 
     Returns:
         best_model: Trained neural network model
@@ -349,9 +506,9 @@ def train_nn_classifier(X_train, y_train, X_val=None, y_val=None, device='cpu'):
 
     # Hyperparameter grid for manual search
     param_combinations = [
-        {'hidden_dim1': 256, 'hidden_dim2': 128, 'dropout': 0.3, 'learning_rate': 0.001, 'epochs': 100},
-        {'hidden_dim1': 512, 'hidden_dim2': 256, 'dropout': 0.3, 'learning_rate': 0.001, 'epochs': 100},
-        {'hidden_dim1': 256, 'hidden_dim2': 128, 'dropout': 0.5, 'learning_rate': 0.0001, 'epochs': 150},
+        {'hidden_dim1': 256, 'hidden_dim2': 128, 'dropout': 0.3, 'learning_rate': 0.001, 'epochs': 200},
+        {'hidden_dim1': 512, 'hidden_dim2': 256, 'dropout': 0.3, 'learning_rate': 0.001, 'epochs': 200},
+        {'hidden_dim1': 256, 'hidden_dim2': 128, 'dropout': 0.5, 'learning_rate': 0.0001, 'epochs': 200},
     ]
 
     best_model = None
@@ -359,14 +516,30 @@ def train_nn_classifier(X_train, y_train, X_val=None, y_val=None, device='cpu'):
 
     if X_val is not None and y_val is not None:
         print(f"Performing hyperparameter search with {len(param_combinations)} configurations...")
+        print(f"Early stopping enabled with patience=10")
+
         for i, params in enumerate(param_combinations):
             print(f"\n{'='*60}")
             print(f"Configuration {i+1}/{len(param_combinations)}:")
             print(f"  Architecture: {params['hidden_dim1']} -> {params['hidden_dim2']} -> 1")
             print(f"  Dropout: {params['dropout']}")
             print(f"  Learning rate: {params['learning_rate']}")
-            print(f"  Epochs: {params['epochs']}")
+            print(f"  Max Epochs: {params['epochs']}")
             print(f"{'='*60}")
+
+            # Initialize wandb run if enabled
+            if use_wandb:
+                try:
+                    import wandb
+                    wandb.init(
+                        project="evo-classifier",
+                        name=f"nn_config_{i+1}",
+                        config=params,
+                        reinit=True
+                    )
+                except ImportError:
+                    print("Warning: wandb not installed. Skipping wandb logging.")
+                    use_wandb = False
 
             model = NeuralNetworkClassifier(
                 input_dim=input_dim,
@@ -376,10 +549,12 @@ def train_nn_classifier(X_train, y_train, X_val=None, y_val=None, device='cpu'):
                 learning_rate=params['learning_rate'],
                 epochs=params['epochs'],
                 batch_size=32,
-                device=device
+                device=device,
+                early_stopping_patience=10,
+                use_wandb=use_wandb
             )
 
-            model.fit(X_train, y_train)
+            model.fit(X_train, y_train, X_val, y_val)
 
             # Evaluate on validation set
             y_val_pred = model.predict(X_val)
@@ -387,14 +562,23 @@ def train_nn_classifier(X_train, y_train, X_val=None, y_val=None, device='cpu'):
             val_f1 = f1_score(y_val, y_val_pred)
             val_mcc = matthews_corrcoef(y_val, y_val_pred)
 
-            print(f"Validation accuracy: {val_accuracy:.4f}")
-            print(f"Validation F1 score: {val_f1:.4f}")
-            print(f"Validation MCC: {val_mcc:.4f}")
+            print(f"\nFinal Validation Results:")
+            print(f"  Accuracy: {val_accuracy:.4f}")
+            print(f"  F1 score: {val_f1:.4f}")
+            print(f"  MCC: {val_mcc:.4f}")
 
             if val_f1 > best_f1:
                 best_f1 = val_f1
                 best_model = model
-                print(f"New best model found with F1: {best_f1:.4f}")
+                print(f"  *** New best model! F1: {best_f1:.4f} ***")
+
+            # Finish wandb run
+            if use_wandb:
+                try:
+                    import wandb
+                    wandb.finish()
+                except:
+                    pass
 
         print(f"\n{'='*60}")
         print(f"Best validation F1 score: {best_f1:.4f}")
@@ -405,31 +589,51 @@ def train_nn_classifier(X_train, y_train, X_val=None, y_val=None, device='cpu'):
         print(f"  Architecture: 256 -> 128 -> 1")
         print(f"  Dropout: 0.3")
         print(f"  Learning rate: 0.001")
-        print(f"  Epochs: 100")
+        print(f"  Max Epochs: 200 (with early stopping)")
+
+        if use_wandb:
+            try:
+                import wandb
+                wandb.init(project="evo-classifier", name="nn_default")
+            except ImportError:
+                print("Warning: wandb not installed. Skipping wandb logging.")
+                use_wandb = False
+
         best_model = NeuralNetworkClassifier(
             input_dim=input_dim,
             hidden_dim1=256,
             hidden_dim2=128,
             dropout=0.3,
             learning_rate=0.001,
-            epochs=100,
+            epochs=200,
             batch_size=32,
-            device=device
+            device=device,
+            early_stopping_patience=10,
+            use_wandb=use_wandb
         )
-        best_model.fit(X_train, y_train)
+        best_model.fit(X_train, y_train, X_val, y_val)
+
+        if use_wandb:
+            try:
+                import wandb
+                wandb.finish()
+            except:
+                pass
 
     return best_model
 
-def evaluate_model(model, X_test, y_test, model_name="Model"):
+def evaluate_model(model, X_test, y_test, md5s_test=None, model_name="Model", output_dir="."):
     """
-    Evaluate the model on the test set
-    
+    Evaluate the model on the test set and save per-sample predictions
+
     Args:
         model: Trained classifier
         X_test: Test embeddings
         y_test: Test labels
+        md5s_test: Test MD5 hashes (optional)
         model_name: Name of the model for printing
-    
+        output_dir: Directory to save predictions CSV
+
     Returns:
         results: Dictionary with evaluation metrics
     """
@@ -458,6 +662,20 @@ def evaluate_model(model, X_test, y_test, model_name="Model"):
     print(f"ROC AUC: {roc_auc:.4f}")
     print("Confusion Matrix:")
     print(conf_matrix)
+
+    # Save per-sample predictions
+    if md5s_test is not None:
+        predictions_df = pd.DataFrame({
+            'md5': md5s_test,
+            'true_label': y_test,
+            'predicted_label': y_pred,
+            'probability': y_pred_proba
+        })
+
+        os.makedirs(output_dir, exist_ok=True)
+        predictions_path = os.path.join(output_dir, f'predictions_{model_name.replace(" ", "_")}.csv')
+        predictions_df.to_csv(predictions_path, index=False)
+        print(f"Saved predictions to {predictions_path}")
 
     # Store results in dictionary
     results = {
@@ -594,6 +812,12 @@ def parse_arguments():
     parser.add_argument("--silhouette_only", action='store_true',
                         help="Only calculate silhouette scores and create PCA visualization (skip training)")
 
+    parser.add_argument("--use_wandb", action='store_true',
+                        help="Enable wandb logging for training (requires wandb to be installed)")
+
+    parser.add_argument("--checkpoint_interval", type=int, default=1024,
+                        help="Number of sequences between embedding extraction checkpoints (default: 1024)")
+
     return parser.parse_args()
 
 def set_random_seed(seed):
@@ -654,6 +878,25 @@ def main():
                 print(f"Error: {df_name} dataset is missing required columns: {missing_columns}")
                 exit(1)
 
+        # Compute MD5 hashes if not already present
+        print("\nComputing MD5 hashes for sequences...")
+        for df_name, df in [("Train", train_df), ("Dev", dev_df), ("Test", test_df)]:
+            if 'md5' not in df.columns:
+                print(f"  Computing MD5s for {df_name} set...")
+                df['md5'] = df['sequence'].apply(compute_md5)
+            else:
+                print(f"  {df_name} set already has MD5 column")
+
+            # Check for duplicates
+            n_total = len(df)
+            n_unique = df['md5'].nunique()
+            n_duplicates = n_total - n_unique
+            if n_duplicates > 0:
+                print(f"  WARNING: {df_name} set contains {n_duplicates} duplicate sequences!")
+                print(f"    Total: {n_total}, Unique: {n_unique}")
+            else:
+                print(f"  {df_name} set: All {n_total} sequences are unique")
+
     except FileNotFoundError as e:
         print(f"Error: {e}")
         print("Please make sure train.csv, dev.csv, and test.csv exist in the specified input directory.")
@@ -663,48 +906,76 @@ def main():
     embeddings_dir = args.embeddings_dir if args.embeddings_dir is not None else args.output_dir
     os.makedirs(embeddings_dir, exist_ok=True)
 
-    # Create paths for saved embeddings
+    # Create paths for saved embeddings and checkpoint directories
     train_embed_path = os.path.join(embeddings_dir, f"train_embeddings_{args.pooling}.npz")
     dev_embed_path = os.path.join(embeddings_dir, f"dev_embeddings_{args.pooling}.npz")
     test_embed_path = os.path.join(embeddings_dir, f"test_embeddings_{args.pooling}.npz")
 
+    train_checkpoint_dir = os.path.join(embeddings_dir, f"train_checkpoints_{args.pooling}")
+    dev_checkpoint_dir = os.path.join(embeddings_dir, f"dev_checkpoints_{args.pooling}")
+    test_checkpoint_dir = os.path.join(embeddings_dir, f"test_checkpoints_{args.pooling}")
+
     # Extract or load embeddings for train set
+    print("\n" + "="*60)
+    print("TRAIN SET EMBEDDINGS")
+    print("="*60)
     if os.path.exists(train_embed_path):
         print(f"Loading pre-extracted train embeddings from {train_embed_path}...")
-        train_data = np.load(train_embed_path)
-        X_train, y_train = train_data['embeddings'], train_data['labels']
+        train_data = np.load(train_embed_path, allow_pickle=True)
+        X_train, y_train, md5s_train = train_data['embeddings'], train_data['labels'], train_data['md5s']
     else:
         print("Extracting embeddings for train set...")
-        X_train, y_train = extract_embeddings(train_df, args.model_name, device,
-                                             batch_size=args.batch_size, pooling=args.pooling)
-        # Save embeddings
-        np.savez(train_embed_path, embeddings=X_train, labels=y_train)
+        X_train, y_train, md5s_train = extract_embeddings(
+            train_df, args.model_name, device,
+            batch_size=args.batch_size,
+            pooling=args.pooling,
+            checkpoint_dir=train_checkpoint_dir,
+            checkpoint_interval=args.checkpoint_interval
+        )
+        # Save final embeddings
+        np.savez(train_embed_path, embeddings=X_train, labels=y_train, md5s=md5s_train)
         print(f"Train embeddings saved to {train_embed_path}")
 
     # Extract or load embeddings for dev set
+    print("\n" + "="*60)
+    print("DEV SET EMBEDDINGS")
+    print("="*60)
     if os.path.exists(dev_embed_path):
         print(f"Loading pre-extracted dev embeddings from {dev_embed_path}...")
-        dev_data = np.load(dev_embed_path)
-        X_val, y_val = dev_data['embeddings'], dev_data['labels']
+        dev_data = np.load(dev_embed_path, allow_pickle=True)
+        X_val, y_val, md5s_val = dev_data['embeddings'], dev_data['labels'], dev_data['md5s']
     else:
         print("Extracting embeddings for dev set...")
-        X_val, y_val = extract_embeddings(dev_df, args.model_name, device,
-                                         batch_size=args.batch_size, pooling=args.pooling)
-        # Save embeddings
-        np.savez(dev_embed_path, embeddings=X_val, labels=y_val)
+        X_val, y_val, md5s_val = extract_embeddings(
+            dev_df, args.model_name, device,
+            batch_size=args.batch_size,
+            pooling=args.pooling,
+            checkpoint_dir=dev_checkpoint_dir,
+            checkpoint_interval=args.checkpoint_interval
+        )
+        # Save final embeddings
+        np.savez(dev_embed_path, embeddings=X_val, labels=y_val, md5s=md5s_val)
         print(f"Dev embeddings saved to {dev_embed_path}")
 
     # Extract or load embeddings for test set
+    print("\n" + "="*60)
+    print("TEST SET EMBEDDINGS")
+    print("="*60)
     if os.path.exists(test_embed_path):
         print(f"Loading pre-extracted test embeddings from {test_embed_path}...")
-        test_data = np.load(test_embed_path)
-        X_test, y_test = test_data['embeddings'], test_data['labels']
+        test_data = np.load(test_embed_path, allow_pickle=True)
+        X_test, y_test, md5s_test = test_data['embeddings'], test_data['labels'], test_data['md5s']
     else:
         print("Extracting embeddings for test set...")
-        X_test, y_test = extract_embeddings(test_df, args.model_name, device,
-                                           batch_size=args.batch_size, pooling=args.pooling)
-        # Save embeddings
-        np.savez(test_embed_path, embeddings=X_test, labels=y_test)
+        X_test, y_test, md5s_test = extract_embeddings(
+            test_df, args.model_name, device,
+            batch_size=args.batch_size,
+            pooling=args.pooling,
+            checkpoint_dir=test_checkpoint_dir,
+            checkpoint_interval=args.checkpoint_interval
+        )
+        # Save final embeddings
+        np.savez(test_embed_path, embeddings=X_test, labels=y_test, md5s=md5s_test)
         print(f"Test embeddings saved to {test_embed_path}")
 
     print(f"Train embeddings shape: {X_train.shape}")
@@ -774,7 +1045,8 @@ def main():
     # Train Neural Network Classifier
     if train_nn:
         start_time = time.time()
-        nn_model = train_nn_classifier(X_train_scaled, y_train, X_val_scaled, y_val, device=args.device)
+        nn_model = train_nn_classifier(X_train_scaled, y_train, X_val_scaled, y_val,
+                                       device=args.device, use_wandb=args.use_wandb)
         nn_training_time = time.time() - start_time
         print(f"Neural Network training time: {nn_training_time:.2f} seconds")
     else:
@@ -783,9 +1055,15 @@ def main():
         print("Skipping Neural Network classifier...")
 
     # Evaluate models on test set
-    linear_results = evaluate_model(linear_model, X_test_scaled, y_test, "Logistic Regression") if train_linear else None
-    svm_results = evaluate_model(svm_model, X_test_scaled, y_test, "SVM (Linear Kernel)") if train_svm else None
-    nn_results = evaluate_model(nn_model, X_test_scaled, y_test, "3-Layer Neural Network") if train_nn else None
+    linear_results = evaluate_model(linear_model, X_test_scaled, y_test,
+                                    md5s_test=md5s_test, model_name="Logistic Regression",
+                                    output_dir=args.output_dir) if train_linear else None
+    svm_results = evaluate_model(svm_model, X_test_scaled, y_test,
+                                 md5s_test=md5s_test, model_name="SVM (Linear Kernel)",
+                                 output_dir=args.output_dir) if train_svm else None
+    nn_results = evaluate_model(nn_model, X_test_scaled, y_test,
+                                md5s_test=md5s_test, model_name="3-Layer Neural Network",
+                                output_dir=args.output_dir) if train_nn else None
 
     # Visualize confusion matrices
     if train_linear:
